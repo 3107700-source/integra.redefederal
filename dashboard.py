@@ -100,7 +100,7 @@ st.markdown("""
 def load_data():
     """Carrega dados: tenta Parquet primeiro (deploy), depois SQLite (local)."""
     parquet_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "parquet")
-    tables = ["prof", "pub", "tccs", "projetos", "detalhes", "formacao", "bancas"]
+    tables = ["prof", "pub", "tccs", "projetos", "detalhes", "formacao", "bancas", "gestao"]
     table_files = {
         "prof": "professores.parquet",
         "pub": "publicacoes.parquet",
@@ -109,6 +109,7 @@ def load_data():
         "detalhes": "curriculo_detalhes.parquet",
         "formacao": "formacao_academica.parquet",
         "bancas": "bancas.parquet",
+        "gestao": "gestao_comissoes.parquet",
     }
 
     # Tenta Parquet primeiro (mais rápido e funciona no Streamlit Cloud)
@@ -145,6 +146,10 @@ def load_data():
             data["bancas"] = pd.read_sql_query("SELECT * FROM bancas", conn)
         except Exception:
             data["bancas"] = pd.DataFrame()
+        try:
+            data["gestao"] = pd.read_sql_query("SELECT * FROM gestao_comissoes", conn)
+        except Exception:
+            data["gestao"] = pd.DataFrame()
     except Exception:
         data = {k: pd.DataFrame() for k in tables}
     finally:
