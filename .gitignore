@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+data/raw/
+data/processed/
+data/integra.db
+check_*.py
+extract_formacao_bancas.py
+analyze_cursos.py
+export_parquet.py
