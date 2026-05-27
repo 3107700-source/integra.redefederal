@@ -596,6 +596,63 @@ class IntegraExtractor:
                                 None,
                             ))
 
+        # ─── Gestão e Comissões (estruturadas) ───
+        gestao_rows = []
+        for atuacao in atuacoes:
+            if not isinstance(atuacao, dict):
+                continue
+            inst_nome = clean_value(atuacao.get("nomeInstituicao"))
+
+            # Direção e Administração
+            for item in atuacao.get("atividadesDeDirecaoEAdministracao", []):
+                if not isinstance(item, dict):
+                    continue
+                inner = item.get("direcaoEAdministracao")
+                if isinstance(inner, dict):
+                    inner = [inner]
+                elif not isinstance(inner, list):
+                    inner = [item]
+                for d in inner:
+                    if not isinstance(d, dict):
+                        continue
+                    gestao_rows.append((
+                        professor_id, sigla, slug, "direcao",
+                        clean_value(d.get("cargoOuFuncao")),
+                        inst_nome,
+                        clean_value(d.get("nomeOrgao")),
+                        clean_value(d.get("nomeUnidade")),
+                        clean_value(d.get("mesInicio")),
+                        clean_value(d.get("anoInicio")),
+                        clean_value(d.get("mesFim")),
+                        clean_value(d.get("anoFim")),
+                        clean_value(d.get("flagPeriodo")),
+                    ))
+
+            # Conselhos, Comissões e Consultorias
+            for item in atuacao.get("atividadesDeConselhoComissaoEConsultoria", []):
+                if not isinstance(item, dict):
+                    continue
+                inner = item.get("conselhoComissaoEConsultoria")
+                if isinstance(inner, dict):
+                    inner = [inner]
+                elif not isinstance(inner, list):
+                    inner = [item]
+                for c in inner:
+                    if not isinstance(c, dict):
+                        continue
+                    gestao_rows.append((
+                        professor_id, sigla, slug, "comissao",
+                        clean_value(c.get("especificacao")),
+                        inst_nome,
+                        clean_value(c.get("nomeOrgao")),
+                        clean_value(c.get("nomeUnidade")),
+                        clean_value(c.get("mesInicio")),
+                        clean_value(c.get("anoInicio")),
+                        clean_value(c.get("mesFim")),
+                        clean_value(c.get("anoFim")),
+                        clean_value(c.get("flagPeriodo")),
+                    ))
+
         # Salva tudo
         self.db.save_tccs(tccs)
         self.db.save_artigos(artigos)
@@ -603,6 +660,7 @@ class IntegraExtractor:
         self.db.save_curriculo_detalhes(detalhes_curriculo)
         self.db.save_formacao_academica(formacoes)
         self.db.save_bancas(bancas_estruturadas)
+        self.db.save_gestao_comissoes(gestao_rows)
 
     async def run_institution(self, sigla: str):
         """Executa extração completa para uma instituição."""

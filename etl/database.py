@@ -174,11 +174,32 @@ class DatabaseManager:
                     FOREIGN KEY (professor_id) REFERENCES professores(professor_id)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS gestao_comissoes (
+                    gestao_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    professor_id INTEGER NOT NULL,
+                    sigla TEXT,
+                    slug_professor TEXT,
+                    tipo TEXT,
+                    cargo_funcao TEXT,
+                    instituicao TEXT,
+                    orgao TEXT,
+                    unidade TEXT,
+                    mes_inicio TEXT,
+                    ano_inicio TEXT,
+                    mes_fim TEXT,
+                    ano_fim TEXT,
+                    flag_periodo TEXT,
+                    FOREIGN KEY (professor_id) REFERENCES professores(professor_id)
+                )
+            """)
             # Índices
             conn.execute("CREATE INDEX IF NOT EXISTS idx_formacao_prof ON formacao_academica(professor_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_formacao_sigla ON formacao_academica(sigla)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_bancas_prof ON bancas(professor_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_bancas_sigla ON bancas(sigla)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_gestao_prof ON gestao_comissoes(professor_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_gestao_sigla ON gestao_comissoes(sigla)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_prof_sigla_slug ON professores(sigla, slug)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tccs_prof ON tccs(professor_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artigos_prof ON artigos(professor_id)")
@@ -315,6 +336,19 @@ class DatabaseManager:
                     natureza, titulo, ano, nome_candidato,
                     nome_instituicao, nome_curso
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, rows)
+
+    def save_gestao_comissoes(self, rows):
+        """Salva cargos de gestão e comissões no banco."""
+        if not rows:
+            return
+        with closing(self._connect()) as conn, conn:
+            conn.executemany("""
+                INSERT INTO gestao_comissoes (
+                    professor_id, sigla, slug_professor, tipo,
+                    cargo_funcao, instituicao, orgao, unidade,
+                    mes_inicio, ano_inicio, mes_fim, ano_fim, flag_periodo
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, rows)
 
     def get_all_professores(self, sigla=None):

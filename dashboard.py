@@ -20,13 +20,37 @@ from plotly.subplots import make_subplots
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (
     DB_PATH, CLUSTERS_OUTPUT, PUBLICACOES_PROCESSED, PROCESSED_DIR,
-    INSTITUICOES, PESOS_RANKING, PESOS_IMPACTO_PRODUCAO, PESOS_TITULACAO
+    INSTITUICOES, PESOS_RANKING, PESOS_IMPACTO_PRODUCAO
 )
-from etl.nlp_tematicas import (
-    extract_topics_lda, compare_institutions, compare_researchers,
-    cluster_themes, get_institution_profile, compute_tfidf_similarity,
-    preprocess_text, STOPWORDS_PT
-)
+
+# PESOS_TITULACAO may not exist in older config versions
+try:
+    from config import PESOS_TITULACAO
+except ImportError:
+    PESOS_TITULACAO = {
+        "pos_doutorado": 12, "doutorado": 10, "mestrado": 7,
+        "especializacao": 4, "graduacao": 2,
+    }
+
+# Import NLP module with fallback
+try:
+    from nlp_tematicas import (
+        extract_topics_lda, compare_institutions, compare_researchers,
+        cluster_themes, get_institution_profile, compute_tfidf_similarity,
+        preprocess_text, STOPWORDS_PT
+    )
+    NLP_AVAILABLE = True
+except (ImportError, Exception):
+    try:
+        from etl.nlp_tematicas import (
+            extract_topics_lda, compare_institutions, compare_researchers,
+            cluster_themes, get_institution_profile, compute_tfidf_similarity,
+            preprocess_text, STOPWORDS_PT
+        )
+        NLP_AVAILABLE = True
+    except (ImportError, Exception):
+        NLP_AVAILABLE = False
+        STOPWORDS_PT = set()
 
 # ─── Configuração ───
 st.set_page_config(
@@ -416,7 +440,7 @@ def page_visao_geral(df_prof, df_pub, df_tccs, df_projetos, df_formacao, df_banc
             fig = px.bar(inst_counts, x="Pesquisadores", y="Instituição", orientation="h",
                          color="Pesquisadores", color_continuous_scale="Blues")
             fig.update_layout(height=400, showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     with col_b:
         st.markdown('<p class="section-title">🗺️ Distribuição por UF</p>', unsafe_allow_html=True)
@@ -426,7 +450,7 @@ def page_visao_geral(df_prof, df_pub, df_tccs, df_projetos, df_formacao, df_banc
             fig = px.bar(uf_counts, x="UF", y="Pesquisadores", color="Pesquisadores",
                          color_continuous_scale="Viridis")
             fig.update_layout(height=400, showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     # Segunda linha
     col_c, col_d = st.columns(2)
@@ -439,7 +463,7 @@ def page_visao_geral(df_prof, df_pub, df_tccs, df_projetos, df_formacao, df_banc
             fig = px.pie(area_counts, values="Quantidade", names="Área", hole=0.4,
                          color_discrete_sequence=px.colors.qualitative.Set3)
             fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     with col_d:
         st.markdown('<p class="section-title">🎓 Titulação dos Pesquisadores</p>', unsafe_allow_html=True)
@@ -451,7 +475,7 @@ def page_visao_geral(df_prof, df_pub, df_tccs, df_projetos, df_formacao, df_banc
             fig = px.bar(form_counts, x="Nível", y="Quantidade", color="Nível",
                          color_discrete_sequence=["#1a365d", "#2b6cb0", "#4299e1", "#90cdf4", "#bee3f8"])
             fig.update_layout(height=400, showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
         else:
             st.info("Dados de formação acadêmica ainda sendo extraídos...")
 
@@ -462,7 +486,7 @@ def page_analise_tematica(df_tccs, df_pub, df_projetos, filtros):
     st.markdown("""
     <div class="main-header">
         <h1>📚 Análise Temática</h1>
-        <p>Identificação e visualização das temáticas de pesquisa na Rede Federal</p>
+        <p>Mapeamento das temáticas de pesquisa por instituição, campus e impacto no ensino</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -479,19 +503,362 @@ def page_analise_tematica(df_tccs, df_pub, df_projetos, filtros):
         if not df_proj_f.empty:
             df_proj_f = df_proj_f[df_proj_f["sigla"].isin(filtros["sigla"])]
 
-    # Sub-abas
-    tab_tccs, tab_artigos, tab_projetos, tab_consolidado = st.tabs([
-        "📝 TCCs", "📄 Artigos", "🔬 Projetos", "📊 Visão Consolidada"
+    # Sub-abas expandidas
+    tab_por_if, tab_por_campus, tab_pesq_ensino, tab_tccs, tab_projetos, tab_evolucao, tab_sobre = st.tabs([
+        "🏛️ Por Instituição", "📍 Por Campus", "🎓 Pesquisa → Ensino",
+        "📝 TCCs", "🔬 Projetos", "📈 Evolução Temporal", "ℹ️ Sobre"
     ])
 
+    with tab_por_if:
+        _tematicas_por_if(df_tccs_f, df_proj_f)
+    with tab_por_campus:
+        _tematicas_por_campus(df_tccs_f, df_proj_f)
+    with tab_pesq_ensino:
+        _pesquisa_ensino(df_tccs_f, df_proj_f, df_pub_f)
     with tab_tccs:
         _render_tccs(df_tccs_f)
-    with tab_artigos:
-        _render_artigos(df_pub_f)
     with tab_projetos:
         _render_projetos(df_proj_f)
-    with tab_consolidado:
-        _render_consolidado(df_tccs_f, df_pub_f, df_proj_f)
+    with tab_evolucao:
+        _evolucao_tematica(df_tccs_f, df_pub_f)
+    with tab_sobre:
+        _sobre_analise_tematica()
+
+
+def _tematicas_por_if(df_tccs, df_proj):
+    """Temáticas mais trabalhadas por instituição."""
+    st.markdown('<p class="section-title">🏛️ Temáticas por Instituição</p>', unsafe_allow_html=True)
+
+    if df_tccs.empty or "palavras_chaves" not in df_tccs.columns:
+        st.info("Sem dados de palavras-chave disponíveis.")
+        return
+
+    siglas = sorted(df_tccs["sigla"].dropna().unique().tolist())
+    if not siglas:
+        st.info("Nenhuma instituição encontrada.")
+        return
+
+    # Top 5 temáticas por IF
+    st.markdown("**Top 5 temáticas de pesquisa por instituição** (baseado em palavras-chave dos TCCs)")
+    rows = []
+    for sigla in siglas:
+        kws_sigla = df_tccs[df_tccs["sigla"] == sigla]["palavras_chaves"].dropna()
+        all_kw = []
+        for kws in kws_sigla:
+            for kw in str(kws).split(";"):
+                kw = kw.strip().lower()
+                if kw and len(kw) > 2 and kw not in STOPWORDS_PT and len(kw) < 60:
+                    all_kw.append(kw)
+        if all_kw:
+            top5 = pd.Series(all_kw).value_counts().head(5)
+            for tema, freq in top5.items():
+                rows.append({"Instituição": sigla, "Tema": tema, "Frequência": freq})
+
+    if rows:
+        df_temas_if = pd.DataFrame(rows)
+        # Heatmap: top temas globais por IF
+        top_temas_global = df_temas_if.groupby("Tema")["Frequência"].sum().nlargest(20).index.tolist()
+        df_heat = df_temas_if[df_temas_if["Tema"].isin(top_temas_global)]
+        pivot = df_heat.pivot_table(index="Tema", columns="Instituição", values="Frequência", fill_value=0)
+
+        fig = px.imshow(pivot, color_continuous_scale="YlOrRd",
+                        title="Heatmap: Top 20 Temáticas × Instituição",
+                        labels=dict(color="Frequência"))
+        fig.update_layout(height=600)
+        st.plotly_chart(fig)
+
+        # Tabela resumo
+        with st.expander("📋 Top 5 temáticas por IF (tabela)"):
+            for sigla in siglas:
+                sigla_data = df_temas_if[df_temas_if["Instituição"] == sigla].head(5)
+                if not sigla_data.empty:
+                    temas_str = " | ".join([f"**{r['Tema']}** ({r['Frequência']})" for _, r in sigla_data.iterrows()])
+                    st.markdown(f"**{sigla}**: {temas_str}")
+
+    # Relação com projetos
+    if not df_proj.empty and "natureza" in df_proj.columns:
+        st.markdown("---")
+        st.markdown('<p class="section-title">🔬 Projetos de Pesquisa por Instituição</p>', unsafe_allow_html=True)
+        proj_por_if = df_proj.groupby(["sigla", "natureza"]).size().reset_index(name="count")
+        fig = px.bar(proj_por_if, x="sigla", y="count", color="natureza",
+                     title="Projetos por Instituição e Natureza", barmode="stack")
+        fig.update_layout(height=400)
+        st.plotly_chart(fig)
+
+
+def _tematicas_por_campus(df_tccs, df_proj):
+    """Temáticas por campus."""
+    st.markdown('<p class="section-title">📍 Temáticas por Campus</p>', unsafe_allow_html=True)
+
+    if df_tccs.empty or "palavras_chaves" not in df_tccs.columns or "campus" not in df_tccs.columns:
+        st.info("Sem dados suficientes.")
+        return
+
+    # Seletor de instituição
+    siglas = sorted(df_tccs["sigla"].dropna().unique().tolist())
+    sigla_sel = st.selectbox("Selecione a instituição:", siglas, key="tematica_campus_if")
+
+    df_if = df_tccs[df_tccs["sigla"] == sigla_sel]
+    campi = sorted(df_if["campus"].dropna().unique().tolist())
+
+    if not campi:
+        st.info(f"Nenhum campus encontrado para {sigla_sel}.")
+        return
+
+    # Top temáticas por campus
+    rows = []
+    for campus in campi:
+        kws_campus = df_if[df_if["campus"] == campus]["palavras_chaves"].dropna()
+        all_kw = []
+        for kws in kws_campus:
+            for kw in str(kws).split(";"):
+                kw = kw.strip().lower()
+                if kw and len(kw) > 2 and kw not in STOPWORDS_PT and len(kw) < 60:
+                    all_kw.append(kw)
+        if all_kw:
+            top_kw = pd.Series(all_kw).value_counts().head(8)
+            for tema, freq in top_kw.items():
+                rows.append({"Campus": campus, "Tema": tema, "Frequência": freq})
+
+    if rows:
+        df_campus_temas = pd.DataFrame(rows)
+
+        # Gráfico por campus
+        fig = px.bar(df_campus_temas, x="Frequência", y="Tema", color="Campus", orientation="h",
+                     barmode="group", title=f"Temáticas por Campus - {sigla_sel}")
+        fig.update_layout(height=max(400, len(df_campus_temas["Tema"].unique()) * 22),
+                          yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig)
+
+        # Métricas por campus
+        st.markdown("---")
+        st.markdown(f"**Resumo por campus ({sigla_sel})**")
+        campus_stats = []
+        for campus in campi:
+            n_tccs = len(df_if[df_if["campus"] == campus])
+            n_proj = len(df_proj[(df_proj["sigla"] == sigla_sel) & (df_proj.get("campus", pd.Series()) == campus)]) if not df_proj.empty and "campus" in df_proj.columns else 0
+            campus_temas = df_campus_temas[df_campus_temas["Campus"] == campus]
+            top_tema = campus_temas.iloc[0]["Tema"] if not campus_temas.empty else "N/A"
+            campus_stats.append({
+                "Campus": campus, "TCCs": n_tccs,
+                "Tema Principal": top_tema,
+                "Temas Distintos": len(campus_temas),
+            })
+        st.dataframe(pd.DataFrame(campus_stats), hide_index=True)
+    else:
+        st.info("Sem palavras-chave suficientes para análise por campus.")
+
+
+def _pesquisa_ensino(df_tccs, df_proj, df_pub):
+    """Relação entre pesquisa e impacto no ensino."""
+    st.markdown('<p class="section-title">🎓 Pesquisa → Ensino: Como a pesquisa impacta o ensino</p>', unsafe_allow_html=True)
+
+    st.markdown("""
+    A produção acadêmica dos docentes impacta diretamente o ensino através de:
+    - **TCCs orientados**: Temas de pesquisa do docente guiam os trabalhos dos alunos
+    - **Projetos de ensino**: Projetos com natureza "ENSINO" aplicam pesquisa na sala de aula
+    - **Diversidade temática**: Quanto mais diversa a pesquisa, mais opções de orientação para alunos
+    """)
+
+    st.markdown("---")
+
+    # Projetos de ensino vs pesquisa
+    if not df_proj.empty and "natureza" in df_proj.columns:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            nat_counts = df_proj["natureza"].value_counts().reset_index()
+            nat_counts.columns = ["Natureza", "Quantidade"]
+            fig = px.pie(nat_counts, values="Quantidade", names="Natureza", hole=0.4,
+                         title="Distribuição de Projetos por Natureza")
+            fig.update_layout(height=350)
+            st.plotly_chart(fig)
+
+        with col_b:
+            # Projetos de ensino por IF
+            ensino_proj = df_proj[df_proj["natureza"] == "ENSINO"]
+            if not ensino_proj.empty:
+                ensino_por_if = ensino_proj["sigla"].value_counts().head(15).reset_index()
+                ensino_por_if.columns = ["Instituição", "Projetos de Ensino"]
+                fig = px.bar(ensino_por_if, x="Projetos de Ensino", y="Instituição", orientation="h",
+                             title="Projetos de Ensino por IF", color="Projetos de Ensino",
+                             color_continuous_scale="Greens")
+                fig.update_layout(height=350, yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig)
+
+    # Relação orientador-tema: docentes que mais orientam e seus temas
+    if not df_tccs.empty and "nome_professor" in df_tccs.columns and "palavras_chaves" in df_tccs.columns:
+        st.markdown("---")
+        st.markdown('<p class="section-title">👨‍🏫 Top Orientadores e suas Temáticas</p>', unsafe_allow_html=True)
+
+        top_orientadores = df_tccs["nome_professor"].value_counts().head(10).index.tolist()
+        orient_data = []
+        for nome in top_orientadores:
+            tccs_prof = df_tccs[df_tccs["nome_professor"] == nome]
+            n_tccs = len(tccs_prof)
+            # Extrai temas
+            all_kw = []
+            for kws in tccs_prof["palavras_chaves"].dropna():
+                for kw in str(kws).split(";"):
+                    kw = kw.strip().lower()
+                    if kw and len(kw) > 2 and kw not in STOPWORDS_PT:
+                        all_kw.append(kw)
+            top_temas = pd.Series(all_kw).value_counts().head(3).index.tolist() if all_kw else []
+            orient_data.append({
+                "Orientador": nome,
+                "TCCs Orientados": n_tccs,
+                "Sigla": tccs_prof["sigla"].mode().iloc[0] if not tccs_prof["sigla"].mode().empty else "",
+                "Temas Principais": ", ".join(top_temas) if top_temas else "N/A",
+            })
+
+        df_orient = pd.DataFrame(orient_data)
+        st.dataframe(df_orient, hide_index=True)
+
+    # Cursos mais impactados pela pesquisa
+    if not df_tccs.empty and "curso" in df_tccs.columns:
+        st.markdown("---")
+        st.markdown('<p class="section-title">📖 Cursos com mais produção de TCCs (impacto no ensino)</p>', unsafe_allow_html=True)
+
+        curso_counts = df_tccs["curso"].value_counts().head(20).reset_index()
+        curso_counts.columns = ["Curso", "TCCs"]
+        fig = px.bar(curso_counts, x="TCCs", y="Curso", orientation="h",
+                     title="Top 20 Cursos por volume de TCCs orientados",
+                     color="TCCs", color_continuous_scale="Blues")
+        fig.update_layout(height=500, yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig)
+
+        # Temáticas por curso
+        st.markdown("**Temáticas dominantes por curso (Top 5 cursos)**")
+        top_cursos = df_tccs["curso"].value_counts().head(5).index.tolist()
+        for curso in top_cursos:
+            tccs_curso = df_tccs[df_tccs["curso"] == curso]
+            all_kw = []
+            for kws in tccs_curso["palavras_chaves"].dropna():
+                for kw in str(kws).split(";"):
+                    kw = kw.strip().lower()
+                    if kw and len(kw) > 2 and kw not in STOPWORDS_PT:
+                        all_kw.append(kw)
+            if all_kw:
+                top3 = pd.Series(all_kw).value_counts().head(3).index.tolist()
+                st.markdown(f"- **{curso}** ({len(tccs_curso)} TCCs): {', '.join(top3)}")
+
+
+def _evolucao_tematica(df_tccs, df_pub):
+    """Evolução temporal das temáticas."""
+    st.markdown('<p class="section-title">📈 Evolução Temporal das Temáticas</p>', unsafe_allow_html=True)
+
+    if df_tccs.empty or "palavras_chaves" not in df_tccs.columns or "ano" not in df_tccs.columns:
+        st.info("Sem dados suficientes para análise temporal.")
+        return
+
+    df_t = df_tccs.copy()
+    df_t["ano"] = pd.to_numeric(df_t["ano"], errors="coerce")
+    df_t = df_t[(df_t["ano"] >= 2010) & (df_t["ano"] <= 2025)]
+
+    # Extrai keywords com ano
+    rows = []
+    for _, row in df_t.iterrows():
+        if pd.isna(row.get("palavras_chaves")):
+            continue
+        ano = int(row["ano"])
+        for kw in str(row["palavras_chaves"]).split(";"):
+            kw = kw.strip().lower()
+            if kw and len(kw) > 2 and kw not in STOPWORDS_PT and len(kw) < 60:
+                rows.append({"ano": ano, "tema": kw})
+
+    if not rows:
+        st.info("Sem dados de palavras-chave com ano.")
+        return
+
+    df_kw_tempo = pd.DataFrame(rows)
+
+    # Top 8 temas globais
+    top_temas = df_kw_tempo["tema"].value_counts().head(8).index.tolist()
+    df_top = df_kw_tempo[df_kw_tempo["tema"].isin(top_temas)]
+    evolucao = df_top.groupby(["ano", "tema"]).size().reset_index(name="frequencia")
+
+    fig = px.line(evolucao, x="ano", y="frequencia", color="tema", markers=True,
+                  title="Evolução das Top 8 Temáticas ao Longo do Tempo")
+    fig.update_layout(height=450)
+    st.plotly_chart(fig)
+
+    # Temas emergentes (crescimento recente)
+    st.markdown("---")
+    st.markdown("**🆕 Temas Emergentes** (maior crescimento nos últimos 3 anos)")
+    recente = df_kw_tempo[df_kw_tempo["ano"] >= 2022]
+    antigo = df_kw_tempo[(df_kw_tempo["ano"] >= 2015) & (df_kw_tempo["ano"] <= 2021)]
+
+    if not recente.empty and not antigo.empty:
+        freq_recente = recente["tema"].value_counts()
+        freq_antigo = antigo["tema"].value_counts()
+        # Calcula crescimento relativo
+        crescimento = []
+        for tema in freq_recente.head(50).index:
+            fr = freq_recente.get(tema, 0)
+            fa = freq_antigo.get(tema, 0)
+            if fa > 0:
+                growth = (fr - fa) / fa * 100
+            elif fr > 3:
+                growth = 999  # tema novo
+            else:
+                continue
+            if growth > 50:
+                crescimento.append({"Tema": tema, "Freq. Recente": fr, "Freq. Anterior": fa,
+                                    "Crescimento (%)": round(growth, 0)})
+
+        if crescimento:
+            df_cresc = pd.DataFrame(crescimento).sort_values("Crescimento (%)", ascending=False).head(10)
+            fig = px.bar(df_cresc, x="Crescimento (%)", y="Tema", orientation="h",
+                         color="Crescimento (%)", color_continuous_scale="Greens",
+                         title="Top 10 Temas com Maior Crescimento")
+            fig.update_layout(height=400, yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig)
+        else:
+            st.info("Sem temas com crescimento significativo detectado.")
+
+
+def _sobre_analise_tematica():
+    """Aba sobre da análise temática."""
+    st.markdown("""
+    ## ℹ️ Sobre a Análise Temática
+
+    ### O que é?
+    A análise temática identifica, quantifica e visualiza os **temas de pesquisa** presentes na
+    produção acadêmica da Rede Federal, extraídos das palavras-chave registradas nos currículos Lattes.
+
+    ### Fontes de dados
+    | Fonte | Dados extraídos | Uso |
+    |-------|----------------|-----|
+    | **TCCs** | Palavras-chave das orientações concluídas | Principal fonte de temáticas |
+    | **Projetos** | Título, natureza (pesquisa/ensino/extensão) | Relação pesquisa-ensino |
+    | **Publicações** | Tipo, ano, campus | Volume de produção |
+
+    ### Abas disponíveis
+
+    **🏛️ Por Instituição**: Heatmap mostrando quais temáticas são mais trabalhadas em cada IF.
+    Permite identificar vocações institucionais e áreas de excelência.
+
+    **📍 Por Campus**: Detalha as temáticas de cada campus dentro de uma instituição.
+    Mostra como diferentes campi se especializam em áreas distintas.
+
+    **🎓 Pesquisa → Ensino**: Analisa como a pesquisa dos docentes impacta o ensino:
+    - Projetos de natureza "ENSINO" que aplicam pesquisa na sala de aula
+    - Orientadores mais produtivos e seus temas (que guiam os alunos)
+    - Cursos mais impactados pela produção de TCCs
+
+    **📝 TCCs**: Análise detalhada dos trabalhos de conclusão — por ano, curso, temáticas.
+
+    **🔬 Projetos**: Distribuição por natureza (pesquisa, extensão, ensino) e evolução temporal.
+
+    **📈 Evolução Temporal**: Como as temáticas mudam ao longo do tempo.
+    Identifica temas emergentes (crescimento > 50% nos últimos 3 anos).
+
+    ### Tratamento de texto (NLP)
+    - **Stopwords**: 150+ termos removidos (preposições, termos acadêmicos genéricos, nomes institucionais)
+    - **Normalização**: Lowercase, remoção de pontuação, filtro por tamanho (3-60 caracteres)
+    - **Frequência**: Contagem simples de ocorrências para ranking de relevância
+    - **Crescimento**: Comparação de frequência entre períodos (2015-2021 vs 2022-2025)
+    """)
+
 
 
 def _extract_keywords(df, col="palavras_chaves"):
@@ -534,7 +901,7 @@ def _render_tccs(df_tccs):
             fig = px.area(ano_counts, x="Ano", y="Quantidade", title="TCCs por Ano",
                          color_discrete_sequence=["#2b6cb0"])
             fig.update_layout(height=350)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     with col_b:
         if "curso" in df_tccs.columns:
@@ -543,7 +910,7 @@ def _render_tccs(df_tccs):
             fig = px.bar(curso_counts, x="Quantidade", y="Curso", orientation="h",
                          title="Top 12 Cursos", color="Quantidade", color_continuous_scale="Blues")
             fig.update_layout(height=350, yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     # Temáticas
     st.markdown('<p class="section-title">🏷️ Temáticas mais frequentes</p>', unsafe_allow_html=True)
@@ -553,11 +920,11 @@ def _render_tccs(df_tccs):
                      color="Frequência", color_continuous_scale="Viridis",
                      title="Top 20 Temáticas em TCCs")
         fig.update_layout(height=500, yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     with st.expander("📋 Tabela completa de TCCs"):
         cols = [c for c in ["titulo", "ano", "curso", "nome_professor", "campus", "sigla"] if c in df_tccs.columns]
-        st.dataframe(df_tccs[cols], use_container_width=True, height=400)
+        st.dataframe(df_tccs[cols], height=400)
         st.download_button("⬇️ Download CSV", df_tccs[cols].to_csv(index=False).encode("utf-8"), "tccs.csv")
 
 
@@ -586,7 +953,7 @@ def _render_artigos(df_pub):
             fig = px.line(ano_counts, x="Ano", y="Quantidade", title="Publicações por Ano",
                          markers=True, color_discrete_sequence=["#e53e3e"])
             fig.update_layout(height=350)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     with col_b:
         if "tipo" in df_pub.columns:
@@ -596,7 +963,7 @@ def _render_artigos(df_pub):
                          title="Top 10 Tipos de Produção", color="Quantidade",
                          color_continuous_scale="Reds")
             fig.update_layout(height=350, yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     # Por campus
     if "campus" in df_pub.columns:
@@ -606,11 +973,11 @@ def _render_artigos(df_pub):
                      title="Publicações por Campus (Top 15)", color="Quantidade",
                      color_continuous_scale="Oranges")
         fig.update_layout(height=400, yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     with st.expander("📋 Tabela completa"):
         cols = [c for c in ["titulo", "tipo", "autor", "ano", "campus", "sigla"] if c in df_pub.columns]
-        st.dataframe(df_pub[cols], use_container_width=True, height=400)
+        st.dataframe(df_pub[cols], height=400)
         st.download_button("⬇️ Download CSV", df_pub[cols].to_csv(index=False).encode("utf-8"), "publicacoes.csv")
 
 
@@ -633,7 +1000,7 @@ def _render_projetos(df_proj):
             fig = px.pie(nat_counts, values="Quantidade", names="Natureza",
                          title="Projetos por Natureza", hole=0.4)
             fig.update_layout(height=350)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     with col_b:
         if "data_inicio" in df_proj.columns:
@@ -646,11 +1013,11 @@ def _render_projetos(df_proj):
             fig = px.bar(ano_counts, x="Ano", y="Quantidade", title="Projetos por Ano de Início",
                          color="Quantidade", color_continuous_scale="Greens")
             fig.update_layout(height=350)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     with st.expander("📋 Tabela completa"):
         cols = [c for c in ["titulo", "natureza", "nome_professor", "sigla", "data_inicio", "data_fim"] if c in df_proj.columns]
-        st.dataframe(df_proj[cols], use_container_width=True, height=400)
+        st.dataframe(df_proj[cols], height=400)
         st.download_button("⬇️ Download CSV", df_proj[cols].to_csv(index=False).encode("utf-8"), "projetos.csv")
 
 
@@ -684,7 +1051,7 @@ def _render_consolidado(df_tccs, df_pub, df_proj):
                      title="Top 25 Temáticas (todas as fontes)",
                      color_discrete_map={"TCC": "#2b6cb0", "Publicação": "#e53e3e", "Projeto": "#38a169"})
         fig.update_layout(height=600, yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
     else:
         st.info("Sem dados de palavras-chave disponíveis para os filtros selecionados.")
 
@@ -728,7 +1095,7 @@ def page_ranking(df_prof, df_formacao):
         hover_data=["sigla", "campus", "area_cnpq"] if "area_cnpq" in top20.columns else ["sigla", "campus"],
     )
     fig.update_layout(height=550, yaxis=dict(autorange="reversed"), margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
     # Composição do IPA
     col_a, col_b = st.columns(2)
@@ -741,7 +1108,7 @@ def page_ranking(df_prof, df_formacao):
         fig = px.bar(pesos_df, x="Peso (%)", y="Componente", orientation="h",
                      color="Peso (%)", color_continuous_scale="Blues")
         fig.update_layout(height=400, yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     with col_b:
         st.markdown('<p class="section-title">🎓 Titulação no Ranking</p>', unsafe_allow_html=True)
@@ -761,7 +1128,7 @@ def page_ranking(df_prof, df_formacao):
             fig = px.pie(tit_counts, values="Quantidade", names="Titulação", hole=0.4,
                          color_discrete_sequence=["#1a365d", "#2b6cb0", "#4299e1", "#90cdf4", "#bee3f8"])
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
         else:
             st.info("Dados de titulação sendo extraídos...")
 
@@ -770,7 +1137,7 @@ def page_ranking(df_prof, df_formacao):
         cols_rank = [c for c in ["posicao", "nome", "sigla", "campus", "area_cnpq", "ipa",
                                   "total_publicacoes", "total_orientacoes", "total_projetos",
                                   "total_bancas_final", "titulacao_score"] if c in df_rank.columns]
-        st.dataframe(df_rank[cols_rank], use_container_width=True, height=500)
+        st.dataframe(df_rank[cols_rank], height=500)
         st.download_button("⬇️ Download Ranking", df_rank[cols_rank].to_csv(index=False).encode("utf-8"), "ranking.csv")
 
 
@@ -809,7 +1176,7 @@ def page_publicacoes(df_pub, filtros):
                             title="Distribuição por Tipo de Produção",
                             color="Quantidade", color_continuous_scale="Blues")
             fig.update_layout(height=450)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     with col_b:
         if "ano" in df_pub_f.columns:
@@ -824,11 +1191,11 @@ def page_publicacoes(df_pub, filtros):
                 fig = px.line(ano_tipo, x="ano", y="count", color="tipo",
                              title="Evolução dos Top 5 Tipos", markers=True)
                 fig.update_layout(height=450)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig)
 
     with st.expander("📋 Dados completos"):
         cols = [c for c in ["titulo", "tipo", "autor", "ano", "campus", "sigla"] if c in df_pub_f.columns]
-        st.dataframe(df_pub_f[cols], use_container_width=True, height=400)
+        st.dataframe(df_pub_f[cols], height=400)
         st.download_button("⬇️ Download", df_pub_f[cols].to_csv(index=False).encode("utf-8"), "publicacoes_completo.csv")
 
 
@@ -907,7 +1274,7 @@ def page_perfil_professor(df_prof, df_pub, df_detalhes, df_formacao, df_bancas):
                                               line=dict(color="#2b6cb0", width=2)))
         fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
                           height=450, margin=dict(l=50, r=50, t=30, b=30))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     # Detalhes da pontuação
     if "ipa" in df_prof.columns:
@@ -936,7 +1303,7 @@ def page_perfil_professor(df_prof, df_pub, df_detalhes, df_formacao, df_bancas):
                 "Score (0-100)": f"{score_val:.1f}", "Peso": f"{peso*100:.0f}%",
                 "Contribuição": f"{contrib:.2f}",
             })
-        st.dataframe(pd.DataFrame(rows_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows_data), hide_index=True)
 
     # Publicações do professor
     if df_pub is not None and not df_pub.empty:
@@ -945,7 +1312,7 @@ def page_perfil_professor(df_prof, df_pub, df_detalhes, df_formacao, df_bancas):
             st.markdown('<p class="section-title">📄 Publicações</p>', unsafe_allow_html=True)
             st.markdown(f"**Total: {len(pub_prof)} publicações**")
             cols = [c for c in ["titulo", "tipo", "ano", "campus"] if c in pub_prof.columns]
-            st.dataframe(pub_prof[cols].sort_values("ano", ascending=False), use_container_width=True, height=300)
+            st.dataframe(pub_prof[cols].sort_values("ano", ascending=False), height=300)
 
     # Bancas
     if df_bancas is not None and not df_bancas.empty:
@@ -955,7 +1322,7 @@ def page_perfil_professor(df_prof, df_pub, df_detalhes, df_formacao, df_bancas):
             st.markdown(f"**Total: {len(bancas_prof)} bancas**")
             cols = [c for c in ["tipo_banca", "natureza", "titulo", "ano", "nome_candidato"] if c in bancas_prof.columns]
             st.dataframe(bancas_prof[cols].sort_values("ano", ascending=False) if "ano" in bancas_prof.columns else bancas_prof[cols],
-                        use_container_width=True, height=300)
+                        height=300)
 
 
 # ─── PÁGINA: METODOLOGIA ───
@@ -1118,16 +1485,16 @@ def _comparar_instituicoes(df_prof, df_pub, df_tccs, df_projetos):
             "Proj/Pesq.": round(len(projs) / n_prof, 1) if n_prof > 0 else 0,
         })
     df_comp = pd.DataFrame(rows)
-    st.dataframe(df_comp, use_container_width=True, hide_index=True)
+    st.dataframe(df_comp, hide_index=True)
 
     # Gráfico de barras agrupadas
     fig = px.bar(df_comp, x="Instituição", y=["Pub/Pesq.", "TCC/Pesq.", "Proj/Pesq."],
                  barmode="group", title="Produtividade per capita")
     fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
     # Perfil temático comparativo
-    if not df_tccs.empty and "palavras_chaves" in df_tccs.columns:
+    if not df_tccs.empty and "palavras_chaves" in df_tccs.columns and NLP_AVAILABLE:
         st.markdown('<p class="section-title">📊 Perfil Temático Comparativo (NLP)</p>', unsafe_allow_html=True)
 
         with st.spinner("Calculando perfis temáticos..."):
@@ -1146,7 +1513,7 @@ def _comparar_instituicoes(df_prof, df_pub, df_tccs, df_projetos):
                              barmode="group", title="Top 10 Temáticas por Instituição")
                 fig.update_layout(height=max(400, len(combined["tema"].unique()) * 25),
                                   yaxis=dict(autorange="reversed"))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig)
 
         # Matriz de similaridade
         if len(siglas_selecionadas) >= 2:
@@ -1164,7 +1531,7 @@ def _comparar_instituicoes(df_prof, df_pub, df_tccs, df_projetos):
             fig = px.imshow(sim_matrix.astype(float), text_auto=".2f", color_continuous_scale="Blues",
                             title="Similaridade de Cosseno entre Instituições")
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     # Área CNPq comparativa
     if "area_cnpq" in df_prof.columns:
@@ -1179,7 +1546,7 @@ def _comparar_instituicoes(df_prof, df_pub, df_tccs, df_projetos):
         fig = px.bar(combined_area, x="Quantidade", y="Área", color="Instituição",
                      barmode="group", orientation="h")
         fig.update_layout(height=450, yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
         st.metric("TCCs", len(tccs_b))
         st.metric("Projetos", len(proj_b))
 
@@ -1219,7 +1586,7 @@ def _comparar_instituicoes(df_prof, df_pub, df_tccs, df_projetos):
             fig = px.bar(combined, x="frequencia", y="tema", color="instituicao", orientation="h",
                          barmode="group", title="Top 15 Temáticas por Instituição")
             fig.update_layout(height=500, yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
     # Comparação por área CNPq
     if "area_cnpq" in df_prof.columns:
@@ -1234,7 +1601,7 @@ def _comparar_instituicoes(df_prof, df_pub, df_tccs, df_projetos):
         fig = px.bar(combined_area, x="Quantidade", y="Área", color="Instituição",
                      barmode="group", orientation="h")
         fig.update_layout(height=400, yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
 
 def _comparar_pesquisadores(df_prof, df_pub):
@@ -1275,7 +1642,7 @@ def _comparar_pesquisadores(df_prof, df_pub):
             "Titulação": int(prof.get("titulacao_score", 0)) if pd.notna(prof.get("titulacao_score", 0)) else 0,
         })
     df_comp = pd.DataFrame(rows)
-    st.dataframe(df_comp, use_container_width=True, hide_index=True)
+    st.dataframe(df_comp, hide_index=True)
 
     # Radar comparativo (múltiplos)
     if "ipa" in df_prof.columns:
@@ -1299,7 +1666,7 @@ def _comparar_pesquisadores(df_prof, df_pub):
                 line=dict(color=color, width=2)
             ))
         fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     # Gráfico de barras comparativo
     st.markdown('<p class="section-title">📊 Comparação por Componente</p>', unsafe_allow_html=True)
@@ -1312,12 +1679,16 @@ def _comparar_pesquisadores(df_prof, df_pub):
     fig = px.bar(df_bar, x="Métrica", y="Valor", color="Pesquisador", barmode="group",
                  title="Métricas brutas por pesquisador")
     fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
 
 def _grupos_tematicos(df_tccs):
     """Agrupa temáticas usando NLP."""
     st.markdown('<p class="section-title">🏷️ Grupos Temáticos (Clustering NLP)</p>', unsafe_allow_html=True)
+
+    if not NLP_AVAILABLE:
+        st.warning("Módulo NLP não disponível. Verifique a instalação do scikit-learn.")
+        return
 
     if df_tccs.empty or "palavras_chaves" not in df_tccs.columns:
         st.info("Sem dados de palavras-chave para agrupar.")
@@ -1337,7 +1708,7 @@ def _grupos_tematicos(df_tccs):
                  title="Temáticas agrupadas por similaridade semântica",
                  color_discrete_sequence=px.colors.qualitative.Set3)
     fig.update_layout(height=max(500, len(result) * 18), yaxis=dict(autorange="reversed"))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
     # Tabela de grupos
     with st.expander("📋 Detalhes dos grupos"):
@@ -1345,7 +1716,7 @@ def _grupos_tematicos(df_tccs):
             grupo_data = result[result["grupo"] == grupo]
             nome_grupo = grupo_data.iloc[0]["grupo_nome"]
             st.markdown(f"**Grupo {grupo + 1}: {nome_grupo}** ({len(grupo_data)} temas)")
-            st.dataframe(grupo_data[["tema", "frequencia"]], use_container_width=True, hide_index=True)
+            st.dataframe(grupo_data[["tema", "frequencia"]], hide_index=True)
 
 
 def _sobre_comparacao():
@@ -1435,7 +1806,7 @@ def _insight_tendencias(df_pub, df_tccs, df_projetos):
                                      mode="lines", name=f"Tendência (R²={r_value**2:.3f})",
                                      line=dict(color="#e53e3e", dash="dash")))
             fig.update_layout(title="Publicações por Ano com Regressão Linear", height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
             col1, col2, col3 = st.columns(3)
             col1.metric("Crescimento anual", f"+{slope:.0f} pub/ano" if slope > 0 else f"{slope:.0f} pub/ano")
@@ -1463,7 +1834,7 @@ def _insight_tendencias(df_pub, df_tccs, df_projetos):
                                      mode="lines", name=f"Tendência (R²={r_value**2:.3f})",
                                      line=dict(color="#e53e3e", dash="dash")))
             fig.update_layout(title="TCCs por Ano com Regressão Linear", height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
 
 def _insight_correlacoes(df_prof):
@@ -1487,7 +1858,7 @@ def _insight_correlacoes(df_prof):
     fig = px.imshow(df_corr, text_auto=".2f", color_continuous_scale="RdBu_r",
                     title="Matriz de Correlação (Pearson)")
     fig.update_layout(height=500)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
     # Insights automáticos
     st.markdown('<p class="section-title">💡 Insights Automáticos</p>', unsafe_allow_html=True)
@@ -1510,7 +1881,7 @@ def _insight_correlacoes(df_prof):
                      hover_data=["nome"] if "nome" in df_prof.columns else None,
                      trendline="ols", title=f"{col_x} vs {col_y}")
     fig.update_layout(height=450)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
 
 def _insight_projecoes(df_pub, df_tccs):
@@ -1539,7 +1910,7 @@ def _insight_projecoes(df_pub, df_tccs):
                                      name="Projeção", line=dict(color="#e53e3e", dash="dot"),
                                      marker=dict(symbol="diamond")))
             fig.update_layout(title="Projeção de Publicações", height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
             st.markdown(f"""
             **Modelo**: Publicações = {slope:.1f} × Ano + {intercept:.0f}
@@ -1581,17 +1952,17 @@ def _insight_perfil_institucional(df_prof, df_pub, df_tccs, df_projetos, df_form
     fig = px.bar(df_perfil, x="Instituição", y=["Pub/Pesq", "TCC/Pesq", "Proj/Pesq"],
                  barmode="group", title="Produtividade per capita por Instituição")
     fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
     if df_perfil["% Doutores"].sum() > 0:
         fig = px.scatter(df_perfil, x="% Doutores", y="Pub/Pesq", size="Pesquisadores",
                          text="Instituição", title="% Doutores vs Publicações per capita", trendline="ols")
         fig.update_traces(textposition="top center")
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     with st.expander("📋 Tabela completa"):
-        st.dataframe(df_perfil, use_container_width=True, hide_index=True)
+        st.dataframe(df_perfil, hide_index=True)
 
 
 def _sobre_insights():
@@ -1676,6 +2047,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        st.error(f"Erro ao carregar o dashboard: {e}")
+        st.exception(e)
 else:
-    main()
+    try:
+        main()
+    except Exception as e:
+        st.error(f"Erro ao carregar o dashboard: {e}")
+        st.exception(e)
