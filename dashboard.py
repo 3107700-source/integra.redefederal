@@ -1123,9 +1123,9 @@ def page_ranking(df_prof, df_formacao):
                         "mestrado": "Mestre", "especializacao": "Especialista", "graduacao": "Graduado"}
             df_form_c = df_formacao.copy()
             df_form_c["peso"] = df_form_c["nivel"].map(PESOS_TITULACAO).fillna(0)
-            max_tit = df_form_c.groupby("slug_professor")["nivel"].apply(
-                lambda x: x.iloc[df_form_c.loc[x.index, "peso"].argmax()] if len(x) > 0 else "graduacao"
-            ).reset_index()
+            # Pega o nível com maior peso por professor
+            idx_max = df_form_c.groupby("slug_professor")["peso"].idxmax()
+            max_tit = df_form_c.loc[idx_max, ["slug_professor", "nivel"]].copy()
             max_tit.columns = ["slug", "maior_titulacao"]
             max_tit["maior_titulacao"] = max_tit["maior_titulacao"].map(nivel_map).fillna("Outro")
             tit_counts = max_tit["maior_titulacao"].value_counts().reset_index()
@@ -1882,7 +1882,8 @@ def _insight_correlacoes(df_prof):
     st.markdown("---")
     col_x = st.selectbox("Eixo X", available, index=0)
     col_y = st.selectbox("Eixo Y", available, index=len(available)-1)
-    fig = px.scatter(df_prof, x=col_x, y=col_y, color="sigla" if "sigla" in df_prof.columns else None,
+    fig = px.scatter(df_prof.dropna(subset=[col_x, col_y]), x=col_x, y=col_y,
+                     color="sigla" if "sigla" in df_prof.columns else None,
                      hover_data=["nome"] if "nome" in df_prof.columns else None,
                      trendline="ols", title=f"{col_x} vs {col_y}")
     fig.update_layout(height=450)
@@ -2033,22 +2034,26 @@ def main():
 
     # Roteamento de páginas
     pagina = filtros["pagina"]
-    if pagina == "🏠 Visão Geral":
-        page_visao_geral(df_prof_f, df_pub_f, df_tccs_f, df_projetos_f, df_formacao, df_bancas)
-    elif pagina == "📚 Análise Temática":
-        page_analise_tematica(df_tccs_f, df_pub_f, df_projetos_f, filtros)
-    elif pagina == "🔄 Comparação":
-        page_comparacao(df_prof_f, df_pub_f, df_tccs_f, df_projetos_f, filtros)
-    elif pagina == "📈 Insights":
-        page_insights(df_prof, df_pub, df_tccs, df_projetos, df_formacao, df_bancas)
-    elif pagina == "🏆 Ranking":
-        page_ranking(df_prof_f, df_formacao)
-    elif pagina == "📄 Publicações":
-        page_publicacoes(df_pub_f, filtros)
-    elif pagina == "👤 Perfil do Professor":
-        page_perfil_professor(df_prof_f, df_pub_f, df_detalhes, df_formacao, df_bancas)
-    elif pagina == "ℹ️ Metodologia":
-        page_metodologia()
+    try:
+        if pagina == "🏠 Visão Geral":
+            page_visao_geral(df_prof_f, df_pub_f, df_tccs_f, df_projetos_f, df_formacao, df_bancas)
+        elif pagina == "📚 Análise Temática":
+            page_analise_tematica(df_tccs_f, df_pub_f, df_projetos_f, filtros)
+        elif pagina == "🔄 Comparação":
+            page_comparacao(df_prof_f, df_pub_f, df_tccs_f, df_projetos_f, filtros)
+        elif pagina == "📈 Insights":
+            page_insights(df_prof, df_pub, df_tccs, df_projetos, df_formacao, df_bancas)
+        elif pagina == "🏆 Ranking":
+            page_ranking(df_prof_f, df_formacao)
+        elif pagina == "📄 Publicações":
+            page_publicacoes(df_pub_f, filtros)
+        elif pagina == "👤 Perfil do Professor":
+            page_perfil_professor(df_prof_f, df_pub_f, df_detalhes, df_formacao, df_bancas)
+        elif pagina == "ℹ️ Metodologia":
+            page_metodologia()
+    except Exception as e:
+        st.error(f"Erro na página '{pagina}': {type(e).__name__}: {e}")
+        st.exception(e)
 
 
 if __name__ == "__main__":
